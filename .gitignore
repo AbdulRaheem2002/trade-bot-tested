@@ -1,0 +1,39 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database & Runtime State
+*.db
+*.db-journal
+*.sqlite
+.trading_agent.lock
+.clean_shutdown
+KILL_SWITCH
+
+# Testing & Linting
+.pytest_cache/
+.ruff_cache/
+
+# Distribution
+dist/
+build/
+*.egg-info/
+

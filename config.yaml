@@ -1,0 +1,79 @@
+# ── General ──────────────────────────────────────────────────────────
+mode: paper                       # paper | live (live mode requires all 6 Go-Live gating checks)
+
+# ── Universe & Exchange ─────────────────────────────────────────────
+universe:
+  - BTC/USDT
+  - ETH/USDT
+  - SOL/USDT
+  - MAGIC/USDT
+  - NEAR/USDT
+  - WLD/USDT
+  - RLC/USDT
+  - ADA/USDT
+  - SUI/USDT
+  - UNI/USDT
+exchange_id: binance               # ccxt exchange id
+
+# ── Timeframes ──────────────────────────────────────────────────────
+decision_timeframe: 5m
+context_timeframe: 1h
+
+# ── Capital ─────────────────────────────────────────────────────────
+starting_equity: 100               # USDT
+
+# ── Position Sizing ────────────────────────────────────────────────
+risk_per_trade_pct: 0.75           # Risk per Trade: The maximum percentage of your total equity you are willing to lose on a single trade if your stop-loss is hit.
+conviction_multipliers:            # Conviction Multipliers: Scales down the risk based on the AI's confidence.
+  A: 1.0                           # Tier A (High Conviction): Uses 100% of the allocated risk.
+  B: 0.6                           # Tier B (Medium Conviction): Uses 60% of the allocated risk.
+
+# ── Exposure Limits ────────────────────────────────────────────────
+max_open_positions: 4              # Max Open Positions: Up to 4 simultaneous trades for $100 capital
+max_total_exposure_pct: 70         # Max Total Exposure: The maximum percentage of equity tied up in active trades ($70 max)
+max_single_position_pct: 25        # Max Single Position: Up to 25% ($25) per trade to easily exceed $10 min notional
+
+# ── Stop / Invalidation ───────────────────────────────────────────
+min_stop_atr: 1.0                  # Min Stop ATR: The closest a stop-loss can be placed to the entry price, measured in Average True Range (ATR). Prevents stops from being too tight.
+max_stop_atr: 4.0                  # Max Stop ATR: The furthest a stop-loss can be placed, measured in ATR. Prevents taking on trades that require huge stop distances.
+
+# ── Market Quality Gates ──────────────────────────────────────────
+max_spread_bps: 10                 # Max Spread: The maximum allowed difference between the bid and ask price (in basis points) to enter a trade. Avoids illiquid markets.
+min_24h_quote_volume: 25000000     # Min Volume: The minimum 24-hour trading volume required to trade an asset. Ensures enough liquidity exists.
+
+# ── Fees & Slippage ───────────────────────────────────────────────
+fees_taker_bps: 10
+slippage_bps: 5
+
+# ── Circuit Breakers ──────────────────────────────────────────────
+daily_loss_limit_pct: 3            # Daily Loss Limit: If the portfolio loses this percentage of equity in a single day, trading halts to prevent further damage.
+weekly_loss_limit_pct: 6           # Weekly Loss Limit: If the portfolio loses this percentage of equity in a single week, trading halts.
+peak_drawdown_limit_pct: 8         # Peak Drawdown Limit: If the portfolio falls this percentage below its all-time high, trading halts entirely.
+
+# ── Short Selling (Perpetuals) ───────────────────────────────────
+shorts_enabled: true               # Shorts Enabled: Both Long and Short perpetual trading enabled.
+min_equity_for_shorts: 50          # Min Equity for Shorts: Enabled for all account sizes ($50+).
+
+# ── LLM ───────────────────────────────────────────────────────────
+decision_llm_timeout_s: 60
+llm_max_retries: 2
+
+# ── Features ──────────────────────────────────────────────────────
+news_enabled: false
+
+# ── Orchestrator & Loop ──────────────────────────────────────────
+candle_close_delay_seconds: 20
+invalidation_monitor_interval_seconds: 30
+invalidation_data_timeout_seconds: 120
+invalidation_close_on_timeout: false
+equity_snapshot_interval_seconds: 300
+lock_file_path: ".trading_agent.lock"
+shutdown_marker_path: ".clean_shutdown"
+kill_switch_file: "KILL_SWITCH"
+breaker_action: "block"
+
+# ── Live Trading Adapter (Phase 9) ────────────────────────────────
+live:
+  max_capital: 100.0                 # Max Capital: Hard ceiling on the equity the agent may use for trading and exposure calculations, regardless of a higher exchange account balance.
+  exact_confirmation_phrase: "I CONFIRM LIVE TRADING WITH REAL CAPITAL"
+

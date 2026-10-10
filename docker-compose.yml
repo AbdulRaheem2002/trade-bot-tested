@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  agent:
+    build: .
+    image: trade-bot-agent
+    container_name: trade-bot-agent
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: bash -c "mkdir -p logs && python -m app.main 2>&1 | tee logs/agent.log"
+    healthcheck:
+      test: ["CMD", "ps", "aux", "|", "grep", "app.main"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard:
+    build: .
+    image: trade-bot-dashboard
+    container_name: trade-bot-dashboard
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    command: bash -c "mkdir -p logs && uvicorn app.dashboard.api:app --host 0.0.0.0 --port 8000 2>&1 | tee logs/dashboard.log"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - agent
+
