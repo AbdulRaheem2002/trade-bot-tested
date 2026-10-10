@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +23,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from app.brain.brain import run_brain  # noqa: E402
+from app.common.enums import ConvictionTier  # noqa: E402
 from app.common.llm_client import LLMClient  # noqa: E402
 from app.common.models import BreakerState, CycleState, MarketSnapshot  # noqa: E402
 from app.config.loader import load_config  # noqa: E402
@@ -47,8 +49,12 @@ async def run_fast_cycle() -> None:
     print("[*] Connecting to Binance live exchange...\n")
 
     store = CandleStore(db_url)
-    broker = PaperBroker(initial_cash=config.starting_equity)
     exchange_client = ExchangeClient(exchange_id=config.exchange_id)
+    broker = PaperBroker(
+        initial_cash=config.starting_equity,
+        shorts_enabled=config.shorts_enabled,
+        exchange_client=exchange_client,
+    )
     llm_client = LLMClient(timeout_s=config.decision_llm_timeout_s, max_retries=config.llm_max_retries)
     portfolio_service = PortfolioService(engine=db_url, broker=broker, config=config)
     await portfolio_service.start()
@@ -131,22 +137,39 @@ async def run_fast_cycle() -> None:
             print(f"[+] Approved & Executed Orders ({len(approved_orders)}):")
             for order in approved_orders:
                 print(
-                    f"    - {order.action.value.upper()} {order.symbol} | Qty: {order.quantity:.4f} | Stop: ${order.protective_stop_price:,.2f}"
+                    f"    - {order.action.value.upper()} {order.symbol} | Qty: {order.quantity:.4f} | Stop: ${order.invalidation_price:,.2f}"
                 )
-                # Fill paper order
-                fill = await broker.submit_order(order)
-                if fill:
-                    print(
-                        f"      --> FILLED: {fill.quantity:.4f} @ ${fill.price:,.4f} (Fee: ${fill.fee:,.2f})"
+                client_id = f"fast_{order.symbol}_{uuid.uuid4().hex[:8]}"
+                if order.action.value.startswith("open"):
+                    fill = await broker.place_market_order(
+                        symbol=order.symbol,
+                        side=order.side,
+                        qty=order.quantity,
+                        client_order_id=client_id,
+                        invalidation_price=order.invalidation_price,
+                        conviction=order.conviction or ConvictionTier.B,
+                        risk_amount=order.risk_amount,
                     )
-                    if order.action.value.startswith("open"):
-                        await portfolio_service.apply_open_fill(
-                            fill,
-                            invalidation_price=order.protective_stop_price,
-                            thesis="Fast On-Demand Market Setup",
-                            target_risk_amount=order.target_risk_amount,
+                    if fill:
+                        print(
+                            f"      --> FILLED: {fill.quantity:.4f} @ ${fill.price:,.4f} (Fee: ${fill.fee:,.2f})"
                         )
-                    elif order.action.value == "close":
+                        await portfolio_service.apply_open_fill(
+                            fill=fill,
+                            invalidation_price=order.invalidation_price,
+                            conviction=order.conviction or ConvictionTier.B,
+                            risk_amount=order.risk_amount,
+                            action=order.action.value,
+                        )
+                elif order.action.value == "close":
+                    fill = await broker.close_position(
+                        symbol=order.symbol,
+                        client_order_id=client_id,
+                    )
+                    if fill:
+                        print(
+                            f"      --> CLOSED: {fill.quantity:.4f} @ ${fill.price:,.4f} (Fee: ${fill.fee:,.2f})"
+                        )
                         await portfolio_service.apply_close_fill(fill, reason="signal_exit")
         else:
             print("[-] No orders approved this cycle (AI opted to HOLD or risk conditions not met).")
