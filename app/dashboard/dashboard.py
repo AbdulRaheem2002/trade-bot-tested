@@ -702,57 +702,60 @@ with tab_feed:
     feed_m3.metric("Cash Preserved (Holds)", f"{holds_count}")
     feed_m4.metric("Protected Cash", f"${sys_state['cash']:,.2f}")
 
-    col_btn, col_filter = st.columns([1, 2])
+    col_btn, col_filter, col_limit = st.columns([1, 2, 1])
     with col_btn:
-        if st.button("🔄 Refresh 5-Min Activity", key="refresh_feed_btn"):
+        if st.button("🔄 Refresh", key="refresh_feed_btn"):
             st.cache_data.clear()
             st.rerun()
     with col_filter:
         view_filter = st.radio(
             "Filter:",
-            ["All Cycles", "Trades Only", "Holds / Cash Only"],
+            ["All Cycles", "Trades Only", "Holds Only"],
             horizontal=True,
             key="feed_filter",
         )
+    with col_limit:
+        log_limit = st.selectbox("Show Logs:", [5, 10, 20], index=0, key="feed_limit")
 
     filtered_decisions = recent_decisions
     if view_filter == "Trades Only":
         filtered_decisions = [d for d in recent_decisions if d["is_trade"]]
-    elif view_filter == "Holds / Cash Only":
+    elif view_filter == "Holds Only":
         filtered_decisions = [d for d in recent_decisions if not d["is_trade"]]
 
     if not filtered_decisions:
         st.info("No decision records matching the selected filter in the past 24 hours.")
     else:
-        for item in filtered_decisions[:60]:
+        for item in filtered_decisions[:log_limit]:
             is_trade = item["is_trade"]
-            card_border = "#10b981" if is_trade else "#e2e8f0"
+            card_border = "#10b981" if is_trade else "#cbd5e1"
             badge_class = "badge-long" if is_trade else "badge-hold"
 
             time_ago_s = max(0, int((now_utc - item["timestamp"]).total_seconds()))
             time_ago_str = f"{time_ago_s // 60}m ago" if time_ago_s >= 60 else f"{time_ago_s}s ago"
 
+            status_text = "Executed order(s) successfully" if is_trade else "Protected $100.00 cash (0 risk, market weakness)"
+            reason_clean = item["reasoning"].strip()
+            if len(reason_clean) > 85:
+                reason_clean = reason_clean[:82] + "..."
+
             st.markdown(
                 f"""
-                <div class="decision-feed-card" style="border-left: 4px solid {card_border};">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="{badge_class}">
-                                {'🟢 ' if is_trade else '🛡️ '}{item['action_summary']}
-                            </span>
-                            <span style="font-weight: 700; font-size: 0.95rem; color: #0f172a;">
-                                {item['cycle_id']}
-                            </span>
-                        </div>
-                        <span style="font-size: 0.8rem; color: #64748b; font-weight: 500;">
+                <div class="decision-feed-card" style="border-left: 3px solid {card_border}; padding: 9px 13px; margin-bottom: 7px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                        <span style="font-size: 0.86rem; font-weight: 700; color: #0f172a;">
+                            <span class="{badge_class}" style="margin-right: 6px;">{'🟢 ' if is_trade else '🛡️ '}{item['action_summary']}</span>
+                            {item['cycle_id']}
+                        </span>
+                        <span style="font-size: 0.77rem; color: #64748b; font-weight: 500;">
                             🕒 {item['timestamp'].strftime('%H:%M:%S UTC')} ({time_ago_str})
                         </span>
                     </div>
-                    <div style="margin-top: 10px; font-size: 0.88rem; color: #334155; line-height: 1.5;">
-                        <b>Decision:</b> {'Executed order(s)' if is_trade else 'Safely remain in 100% cash ($100.00). Market weakness detected; zero capital risked.'}
+                    <div style="font-size: 0.82rem; color: #334155; margin-top: 4px; line-height: 1.4;">
+                        <b>Status:</b> {status_text}
                     </div>
-                    <div style="margin-top: 8px; font-size: 0.83rem; color: #475569; background: #f8fafc; padding: 8px 12px; border-radius: 6px; border: 1px solid #edf2f7;">
-                        <b>AI Thesis:</b> {item['reasoning']}
+                    <div style="font-size: 0.79rem; color: #64748b; margin-top: 2px; line-height: 1.4;">
+                        <b>Reason:</b> {reason_clean}
                     </div>
                 </div>
                 """,

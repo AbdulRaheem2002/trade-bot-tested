@@ -11,11 +11,20 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import os
 import sys
 import uuid
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
+
+# Silence internal framework logging for clean 3-line console output
+logging.disable(logging.INFO)
+logging.getLogger("litellm").setLevel(logging.CRITICAL)
+os.environ["LITELLM_LOG"] = "CRITICAL"
+warnings.filterwarnings("ignore")
 
 # Add project root to sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,17 +45,9 @@ from app.reflex.reflex import run_reflex  # noqa: E402
 
 
 async def run_fast_cycle() -> None:
-    print("\n" + "=" * 75)
-    print("      AUTONOMOUS TRADING AGENT - FAST ON-DEMAND TRADING CYCLE      ")
-    print("=" * 75)
-
     config = load_config()
     db_path = _PROJECT_ROOT / "trading_agent.db"
     db_url = f"sqlite:///{db_path}"
-
-    print(f"[*] Active Universe ({len(config.universe)} tokens): {', '.join(config.universe)}")
-    print(f"[*] Max Open Positions: {config.max_open_positions} | Risk per Trade: {config.risk_per_trade_pct}%")
-    print("[*] Connecting to Binance live exchange...\n")
 
     store = CandleStore(db_url)
     exchange_client = ExchangeClient(exchange_id=config.exchange_id)
@@ -61,51 +62,39 @@ async def run_fast_cycle() -> None:
 
     try:
         now_dt = datetime.now(UTC)
+        time_tag = now_dt.strftime("%H:%M:%S")
         cycle_id = f"fast_{now_dt.strftime('%Y%m%d_%H%M%S')}"
 
-        # 1. Sync live candles and current prices for all universe tokens
-        print("[*] Step 1: Syncing live candles & order books from Binance...")
+        # 1. Sync live candles quietly
         for sym in config.universe:
-            try:
-                # Update both 4h and 1d candles
+            with contextlib.suppress(Exception):
                 await store.update_to_latest(sym, "4h", client=exchange_client)
                 await store.update_to_latest(sym, "1d", client=exchange_client)
-            except Exception as exc:
-                print(f"    [!] Notice for {sym}: {exc}")
 
-        # 2. Build live technical snapshots
-        print("\n[*] Step 2: Building live indicator snapshots (EMA, ATR, RSI, Spreads)...")
         snapshots: dict[str, MarketSnapshot] = {}
         for sym in config.universe:
-            try:
+            with contextlib.suppress(Exception):
                 snap = await build_snapshot(sym, store=store, client=exchange_client, config=config, now=now_dt)
                 snapshots[sym] = snap
-                print(
-                    f"    [+] {sym:<10} Price: ${snap.current_price:,.2f} | EMA200: ${snap.ema200_4h:,.2f} | ATR14: ${snap.atr14_4h:,.2f} | Spread: {snap.spread_bps:.1f} bps"
-                )
-            except Exception as exc:
-                print(f"    [-] Skipped {sym} (insufficient candles yet): {exc}")
 
         if not snapshots:
-            print("[!] Could not build snapshots for any symbol. Exiting.")
+            print(f"[{time_tag}] [!] Could not sync live market data from Binance.")
             return
 
-        # 3. Check / Run Brain daily macro report if needed
-        print("\n[*] Step 3: Verifying Daily Brain Market Regime...")
-        try:
-            brain_report = await run_brain(
+        with contextlib.suppress(Exception):
+            await run_brain(
                 client=llm_client,
                 store=store,
                 portfolio_service=portfolio_service,
                 engine=db_url,
                 config=config,
             )
-            print(f"    [+] Brain Macro Regime: {brain_report.market_regime.value.upper()}")
-        except Exception as exc:
-            print(f"    [!] Brain report notice: {exc}")
 
-        # 4. Run Reflex 4-hour decision cycle with AI
-        print(f"\n[*] Step 4: Running Reflex Tactical AI Engine ({os.environ.get('LLM_MODEL_NAME', 'Gemini')})...")
+        # Line 1: Sync status
+        engine_name = os.environ.get("LLM_MODEL_NAME", "Gemini / Groq")
+        print(f"[{time_tag}] ⚡ 5-Min Cycle: Synced {len(snapshots)} pairs from Binance | AI Engine: {engine_name}")
+
+        # 2. Run Reflex decision cycle
         cycle_state = CycleState(
             cycle_time=now_dt,
             expected_candle_time=now_dt,
@@ -124,21 +113,9 @@ async def run_fast_cycle() -> None:
             cycle_state=cycle_state,
         )
 
-        print("\n" + "=" * 75)
-        print("                         CYCLE EXECUTION RESULTS                         ")
-        print("=" * 75)
-
-        if rejections:
-            print(f"[!] Risk Engine Filtered / Rejected ({len(rejections)}):")
-            for r in rejections:
-                print(f"    - {r.symbol}: {r.reason.value.upper()} ({r.detail})")
-
+        # Line 2: Decision / Execution status
         if approved_orders:
-            print(f"[+] Approved & Executed Orders ({len(approved_orders)}):")
             for order in approved_orders:
-                print(
-                    f"    - {order.action.value.upper()} {order.symbol} | Qty: {order.quantity:.4f} | Stop: ${order.invalidation_price:,.2f}"
-                )
                 client_id = f"fast_{order.symbol}_{uuid.uuid4().hex[:8]}"
                 if order.action.value.startswith("open"):
                     fill = await broker.place_market_order(
@@ -151,9 +128,6 @@ async def run_fast_cycle() -> None:
                         risk_amount=order.risk_amount,
                     )
                     if fill:
-                        print(
-                            f"      --> FILLED: {fill.quantity:.4f} @ ${fill.price:,.4f} (Fee: ${fill.fee:,.2f})"
-                        )
                         await portfolio_service.apply_open_fill(
                             fill=fill,
                             invalidation_price=order.invalidation_price,
@@ -161,26 +135,18 @@ async def run_fast_cycle() -> None:
                             risk_amount=order.risk_amount,
                             action=order.action.value,
                         )
+                        print(f"[{time_tag}] 🟢 EXECUTED: {order.action.value.upper()} {order.symbol} ({fill.quantity:.4f} @ ${fill.price:,.2f} | Stop: ${order.invalidation_price:,.2f})")
                 elif order.action.value == "close":
-                    fill = await broker.close_position(
-                        symbol=order.symbol,
-                        client_order_id=client_id,
-                    )
+                    fill = await broker.close_position(symbol=order.symbol, client_order_id=client_id)
                     if fill:
-                        print(
-                            f"      --> CLOSED: {fill.quantity:.4f} @ ${fill.price:,.4f} (Fee: ${fill.fee:,.2f})"
-                        )
                         await portfolio_service.apply_close_fill(fill, reason="signal_exit")
+                        print(f"[{time_tag}] 🔴 CLOSED: {order.symbol} @ ${fill.price:,.2f}")
         else:
-            print("[-] No orders approved this cycle (AI opted to HOLD or risk conditions not met).")
+            print(f"[{time_tag}] 🛡️ DECISION: HOLD CASH (All {len(snapshots)} pairs scanned; zero risk; capital protected)")
 
-        # 5. Current Portfolio Status
+        # Line 3: Portfolio state
         port = portfolio_service.get_state()
-        print("\n" + "=" * 75)
-        print(f"[*] Portfolio Status: Equity = ${port.equity:,.2f} | Cash = ${port.cash:,.2f} | Open Positions = {len(port.positions)}")
-        for sym, pos in port.positions.items():
-            print(f"    * {sym} ({pos.side.value.upper()}): {pos.quantity:.4f} units @ Entry: ${pos.entry_price:,.2f} | Stop: ${pos.invalidation_price:,.2f}")
-        print("=" * 75 + "\n")
+        print(f"[{time_tag}] 💼 PORTFOLIO: Equity = ${port.equity:,.2f} | Cash = ${port.cash:,.2f} | Open Positions = {len(port.positions)}")
 
     finally:
         await portfolio_service.stop()
