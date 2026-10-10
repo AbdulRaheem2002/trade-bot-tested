@@ -145,7 +145,10 @@ class LLMClient:
 
         # Use response_format schema if supported
         if response_schema is not None:
-            kwargs["response_format"] = response_schema
+            if "groq" in target_model.lower():
+                kwargs["response_format"] = {"type": "json_object"}
+            else:
+                kwargs["response_format"] = response_schema
 
         for attempt in range(self.max_retries + 1):
             attempts += 1

@@ -34,6 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from app.brain.brain import run_brain  # noqa: E402
 from app.common.enums import ConvictionTier  # noqa: E402
 from app.common.llm_client import LLMClient  # noqa: E402
+from app.common.time_utils import get_latest_closed_candle_time  # noqa: E402
 from app.common.models import BreakerState, CycleState, MarketSnapshot  # noqa: E402
 from app.config.loader import load_config  # noqa: E402
 from app.data.exchange_client import ExchangeClient  # noqa: E402
@@ -97,7 +98,7 @@ async def run_fast_cycle() -> None:
         # 2. Run Reflex decision cycle
         cycle_state = CycleState(
             cycle_time=now_dt,
-            expected_candle_time=now_dt,
+            expected_candle_time=get_latest_closed_candle_time(now_dt, "4h"),
             breaker_state=BreakerState(),
             kill_switch_active=False,
         )
