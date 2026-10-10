@@ -468,7 +468,7 @@ def fetch_live_price(symbol: str) -> float | None:
 
 
 def clean_reasoning_text(text: str | None) -> str:
-    """Clean reasoning text by stripping raw JSON fragments or prompt noise."""
+    """Clean reasoning text by stripping raw JSON fragments and LLM repetition loops."""
     if not text:
         return "Market evaluated across universe. Strict capital preservation and risk guidelines active."
     cleaned = str(text).strip()
@@ -477,52 +477,70 @@ def clean_reasoning_text(text: str | None) -> str:
             idx = cleaned.find(marker)
             cleaned = cleaned[:idx].strip()
     cleaned = cleaned.removesuffix("-->").rstrip(",{:\n\t ").strip()
-    if len(cleaned) < 15 or "correctly now safely properly" in cleaned:
+
+    # Cut off degenerate LLM repetition loops
+    loop_triggers = [
+        "now evaluated completely safely",
+        "safely completely right here",
+        "correctly now safely",
+        "right now completely",
+        "verified securely right now",
+        "properly safely checked",
+        "safely securely checked",
+        "completely safely accurately",
+        "completely successfully verified",
+        "correctly safely fully now",
+    ]
+    for trigger in loop_triggers:
+        if trigger in cleaned:
+            idx = cleaned.find(trigger)
+            cleaned = cleaned[:idx].strip().rstrip(",.").strip() + "."
+
+    if len(cleaned) < 15:
         return "Broader market structure in cautious consolidation. Holding capital in cash to preserve principal."
     return cleaned
 
 
 @st.cache_data(ttl=5)
 def fetch_position_ai_context(symbol: str) -> dict[str, Any]:
-    """Fetch the latest AI trade thesis, strategy model, and rationale for an open position."""
+    """Fetch the exact trade entry thesis, strategy model, and rationale for an open position."""
     with engine.connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             select(DecisionModel)
             .where(DecisionModel.parsed_json.like(f"%{symbol}%"))
             .order_by(desc(DecisionModel.timestamp))
-            .limit(1)
-        ).first()
-        if not row:
-            return {
-                "cycle_id": "fast_cycle",
-                "thesis": "Active momentum breakout setup meeting quantitative risk parameters.",
-                "rationale": "High volume expansion and price operating above key dynamic EMAs.",
-                "conviction": "A",
-                "confidence": 0.85,
-                "strategy": "ProbablyProfit Volume Breakout Model",
-                "invalidation": "Stop loss breach below 1.5 ATR buffer",
-            }
-        try:
-            parsed = json.loads(row.parsed_json) if row.parsed_json else {}
-            for d in parsed.get("decisions", []):
-                if d.get("symbol") == symbol:
-                    return {
-                        "cycle_id": row.cycle_id,
-                        "timestamp": row.timestamp,
-                        "thesis": d.get("thesis") or clean_reasoning_text(row.reasoning),
-                        "rationale": d.get("rationale") or clean_reasoning_text(row.reasoning),
-                        "conviction": d.get("conviction", "A"),
-                        "confidence": float(d.get("confidence", 0.85)),
-                        "strategy": "ProbablyProfit Volume Breakout Model",
-                        "invalidation": d.get("invalidation", "Price drops below invalidation stop level"),
-                    }
-        except Exception:
-            pass
+            .limit(50)
+        ).all()
+
+        for r in rows:
+            if not r.parsed_json:
+                continue
+            try:
+                parsed = json.loads(r.parsed_json)
+                for d in parsed.get("decisions", []):
+                    d_sym = str(d.get("symbol", ""))
+                    d_act = str(d.get("action", "")).lower()
+                    if symbol in d_sym and "open" in d_act:
+                        rationale = d.get("rationale") or clean_reasoning_text(r.reasoning)
+                        thesis = d.get("thesis") or rationale
+                        return {
+                            "cycle_id": r.cycle_id,
+                            "timestamp": r.timestamp,
+                            "thesis": clean_reasoning_text(thesis),
+                            "rationale": clean_reasoning_text(rationale),
+                            "conviction": d.get("conviction", "A"),
+                            "confidence": float(d.get("confidence", 0.85)),
+                            "strategy": "ProbablyProfit Volume Breakout Model",
+                            "invalidation": d.get("invalidation", "Price drops below invalidation stop level"),
+                        }
+            except Exception:
+                continue
+
         return {
-            "cycle_id": row.cycle_id,
-            "timestamp": row.timestamp,
-            "thesis": clean_reasoning_text(row.reasoning),
-            "rationale": clean_reasoning_text(row.reasoning),
+            "cycle_id": "fast_cycle",
+            "timestamp": datetime.now(UTC),
+            "thesis": "High volume expansion and price operating above key dynamic EMAs.",
+            "rationale": "Active momentum breakout setup meeting quantitative risk parameters.",
             "conviction": "A",
             "confidence": 0.85,
             "strategy": "ProbablyProfit Volume Breakout Model",

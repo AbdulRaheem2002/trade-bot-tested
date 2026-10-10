@@ -136,17 +136,22 @@ class LLMClient:
         actual_temp = temperature
         if "gemini" in target_model.lower() and actual_temp < 1.0:
             actual_temp = 1.0
+        elif "groq" in target_model.lower() and actual_temp < 0.15:
+            actual_temp = 0.15
 
         kwargs: dict[str, Any] = {
             "model": target_model,
             "messages": messages,
             "temperature": actual_temp,
+            "max_tokens": 2500,
         }
 
         # Use response_format schema if supported
         if response_schema is not None:
             if "groq" in target_model.lower():
                 kwargs["response_format"] = {"type": "json_object"}
+                kwargs["frequency_penalty"] = 0.1
+                kwargs["presence_penalty"] = 0.05
             else:
                 kwargs["response_format"] = response_schema
 
